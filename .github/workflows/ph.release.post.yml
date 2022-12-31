@@ -1,0 +1,150 @@
+name: Post-release (Philippines)
+on:
+  push:
+    branches:
+      - dev/android/ph
+      - staging/android/ph
+      - internal-test/android/ph
+      - alpha/android/ph
+      - beta/android/ph
+      - production/android/ph
+
+env:
+  GITHUB_REF: ${{ secrets.GITHUB_REF }}
+
+jobs:
+  tagRelease:
+    name: Tag Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        name: Checkout project
+        with:
+          token: ${{ secrets.PR_TOKEN }}
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v2
+        with:
+          git_user_signingkey: true
+          git_tag_gpgsign: true
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Tag Release
+        id: tag
+        run: |
+          VERSION_TYPE=dev
+          if [[ $GITHUB_REF  == *"dev"* ]]
+            then
+            VERSION_TYPE=dev
+          elif [[ $GITHUB_REF  == *"staging"* ]]
+            then
+            VERSION_TYPE=staging
+          elif [[ $GITHUB_REF  == *"internal-test"* ]]
+            then
+            VERSION_TYPE=internal
+          elif [[ $GITHUB_REF  == *"alpha"* ]]
+            then
+            VERSION_TYPE=alpha
+          elif [[ $GITHUB_REF  == *"beta"* ]]
+            then
+            VERSION_TYPE=beta
+          elif [[ $GITHUB_REF  == *"production"* ]]
+            then
+            VERSION_TYPE=production
+          fi
+          VERSION=$(android/version.sh $VERSION_TYPE ph)
+          TAG=android-$VERSION
+          git tag -s $TAG -m "$VERSION Release"
+          git push --tags
+          echo ::set-output name=VERSION_TYPE::$VERSION_TYPE
+          echo ::set-output name=VERSION::$VERSION
+          echo ::set-output name=TAG::$TAG
+
+      - name: Create Release
+        if: ${{ steps.tag.outputs.VERSION_TYPE == 'production' }}
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.tag.outputs.TAG }}
+          release_name: ${{ steps.tag.outputs.VERSION }}
+          body_path: android/philippines/RELEASE.md
+          prerelease: ${{ steps.tag.outputs.VERSION_TYPE == 'internal' }}
+
+  bumpVersion:
+    name: Version Bump
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        name: Checkout project
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v2
+        with:
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Bump version code
+        id: bump
+        run: |
+          echo "Figuring out version type..."
+          VERSION_TYPE=dev
+          if [[ $GITHUB_REF  == *"dev"* ]]
+            then
+            VERSION_TYPE=dev
+          elif [[ $GITHUB_REF  == *"staging"* ]]
+            then
+            VERSION_TYPE=staging
+          elif [[ $GITHUB_REF  == *"internal-test"* ]]
+            then
+            VERSION_TYPE=internal
+          elif [[ $GITHUB_REF  == *"alpha"* ]]
+            then
+            VERSION_TYPE=alpha
+          elif [[ $GITHUB_REF  == *"beta"* ]]
+            then
+            VERSION_TYPE=beta
+          elif [[ $GITHUB_REF  == *"production"* ]]
+            then
+            VERSION_TYPE=production
+          fi
+
+          OLD_VERSION=$(android/version.sh $VERSION_TYPE ph)
+          echo ::set-output name=OLD_VERSION::$OLD_VERSION
+
+          echo "Bumping $VERSION_TYPE version..."
+          ./android/version-bump.sh $VERSION_TYPE ph
+
+          NEW_VERSION=$(android/version.sh $VERSION_TYPE ph)
+          echo ::set-output name=NEW_VERSION::$NEW_VERSION
+
+          echo "Pulling from source branch..."
+          BRANCH=bump/$NEW_VERSION
+          echo ::set-output name=BRANCH::$BRANCH
+          git fetch
+          git checkout -b $BRANCH
+          git pull origin $GITHUB_REF
+
+          git commit -S -am "Bumps $VERSION_TYPE version code"
+          git push origin $BRANCH
+
+      - name: Create Version Bump PR to develop
+        run: |
+          gh pr create \
+            -B develop \
+            -H ${{ steps.bump.outputs.BRANCH }} \
+            -t '[CI] ${{ steps.bump.outputs.OLD_VERSION }} to ${{ steps.bump.outputs.NEW_VERSION }}' \
+            -f
+        env:
+          GITHUB_TOKEN: ${{ secrets.PR_TOKEN }}
+
+      - name: Auto Merge Version Bump
+        run: |
+          gh pr merge --auto -m ${{ steps.bump.outputs.BRANCH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.PR_TOKEN }}

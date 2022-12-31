@@ -1,0 +1,6 @@
+[versions]
+compose-bom = "2022.12.00"
+
+[libraries]
+androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "compose-bom" }
+androidx-activity-compose = "androidx.activity:activity-compose:1.6.1"

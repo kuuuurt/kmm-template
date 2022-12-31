@@ -1,0 +1,84 @@
+name: Firebase Test Lab (Philippines)
+on:
+  push:
+    branches: [ firebase-test-lab/android/ph ]
+
+jobs:
+  testApp:
+    name: Test App
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+      name: Checkout project
+
+    - name: Setup Keystore
+      run: |
+        echo "${{ secrets.PH_KEYSTORE }}" | base64 -d > android/philippines/app/plentina.jks
+        echo '${{ secrets.KEYSTORE_PROPERTIES }}' >> android/philippines/app/keystore.properties
+
+    - name: Setup Secrets
+      run: |
+        echo '${{ secrets.COMMON_SHARED_SECRETS }}' >> shared/common/secrets.properties
+        echo '${{ secrets.PH_SHARED_SECRETS }}' >> shared/philippines/secrets.properties
+
+    - name: Setup JDK 11
+      uses: actions/setup-java@v2
+      with:
+        distribution: 'adopt'
+        java-version: '11'
+
+    - name: Set up Ruby 2.6
+      uses: actions/setup-ruby@v1
+      with:
+        ruby-version: 2.6
+
+    - name: Setup Gradle
+      uses: gradle/gradle-build-action@v2
+
+    - uses: actions/cache@v2
+      name: Gem Cache
+      with:
+        path: android/vendor/bundle
+        key: ${{ runner.os }}-gems-${{ hashFiles('android/Gemfile.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-gems-
+
+    - name: Build APK
+      working-directory: android
+      run: |
+        gem install bundler && bundle install
+        bundle exec fastlane buildApk flavor:Dev buildType:Debug country:Philippines
+
+    - name: Build Test APKs
+      run: |
+        ./gradlew android:philippines:app:assembleDevDebugAndroidTest
+
+    - name: Clean-up Secrets
+      run: |
+        KEYSTORE_FILE=cat android/philippines/app/keystore.properties | grep storeFile | cut -d '=' -f2
+        rm -rf android/philippines/app/keystore.properties
+        rm -rf $KEYSTORE_FILE
+        rm -rf shared/common/secrets.properties
+        rm -rf shared/philippines/secrets.properties
+        rm -rf android/fastlane/play-store-service-account-key.json
+
+    - name: Login on gcloud
+      uses: GoogleCloudPlatform/github-actions/setup-gcloud@master
+      with:
+        service_account_key: ${{ secrets.DEV_FIREBASE_SERVICE_ACCOUNT_KEY }}
+
+    - name: Set gcloud project
+      run: gcloud config set project ${{ secrets.DEV_FIREBASE_PROJECT_ID }}
+
+    - name: Run Instrumentation Tests in Firebase Test Lab
+      run: |
+        gcloud firebase test android run \
+          --type instrumentation \
+          --timeout 30m \
+          --app android/philippines/app/build/outputs/apk/dev/debug/app-dev-debug.apk \
+          --test android/philippines/app/build/outputs/apk/androidTest/dev/debug/app-dev-debug-androidTest.apk \
+          --device model=H8314,version=26,locale=en,orientation=portrait  \
+          --device model=Nexus5X,version=23,locale=en,orientation=portrait \
+          --device model=Nexus9,version=21,locale=en,orientation=portrait \
+          --device model=blueline,version=28,locale=en,orientation=portrait \
+          --async
